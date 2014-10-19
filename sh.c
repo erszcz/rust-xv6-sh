@@ -1,8 +1,11 @@
 // Shell.
 
-#include "types.h"
-#include "user.h"
-#include "fcntl.h"
+#include <sys/types.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
 // Parsed command representation
 #define EXEC  1
@@ -49,6 +52,27 @@ struct backcmd {
   struct cmd *cmd;
 };
 
+// Linux compat layer.
+char*
+xv6_gets(char *buf, int max)
+{
+  int i, cc;
+  char c;
+
+  for(i=0; i+1 < max; ){
+    cc = read(0, &c, 1);
+    if(cc < 1)
+      break;
+    buf[i++] = c;
+    if(c == '\n' || c == '\r')
+      break;
+  }
+  buf[i] = '\0';
+  return buf;
+}
+
+#define O_CREATE O_CREAT
+
 int fork1(void);  // Fork but panics on failure.
 void panic(char*);
 struct cmd *parsecmd(char*);
@@ -65,7 +89,7 @@ runcmd(struct cmd *cmd)
   struct redircmd *rcmd;
 
   if(cmd == 0)
-    exit();
+    exit(0);
   
   switch(cmd->type){
   default:
@@ -74,17 +98,17 @@ runcmd(struct cmd *cmd)
   case EXEC:
     ecmd = (struct execcmd*)cmd;
     if(ecmd->argv[0] == 0)
-      exit();
-    exec(ecmd->argv[0], ecmd->argv);
-    printf(2, "exec %s failed\n", ecmd->argv[0]);
+      exit(0);
+    execv(ecmd->argv[0], ecmd->argv);
+    fprintf(stderr, "execv %s failed\n", ecmd->argv[0]);
     break;
 
   case REDIR:
     rcmd = (struct redircmd*)cmd;
     close(rcmd->fd);
     if(open(rcmd->file, rcmd->mode) < 0){
-      printf(2, "open %s failed\n", rcmd->file);
-      exit();
+      fprintf(stderr, "open %s failed\n", rcmd->file);
+      exit(0);
     }
     runcmd(rcmd->cmd);
     break;
@@ -127,15 +151,15 @@ runcmd(struct cmd *cmd)
       runcmd(bcmd->cmd);
     break;
   }
-  exit();
+  exit(0);
 }
 
 int
 getcmd(char *buf, int nbuf)
 {
-  printf(2, "$ ");
+  fprintf(stderr, "$ ");
   memset(buf, 0, nbuf);
-  gets(buf, nbuf);
+  xv6_gets(buf, nbuf);
   if(buf[0] == 0) // EOF
     return -1;
   return 0;
@@ -162,21 +186,21 @@ main(void)
       // Chdir has no effect on the parent if run in the child.
       buf[strlen(buf)-1] = 0;  // chop \n
       if(chdir(buf+3) < 0)
-        printf(2, "cannot cd %s\n", buf+3);
+        fprintf(stderr, "cannot cd %s\n", buf+3);
       continue;
     }
     if(fork1() == 0)
       runcmd(parsecmd(buf));
     wait();
   }
-  exit();
+  exit(0);
 }
 
 void
 panic(char *s)
 {
-  printf(2, "%s\n", s);
-  exit();
+  fprintf(stderr, "%s\n", s);
+  exit(0);
 }
 
 int
@@ -335,7 +359,7 @@ parsecmd(char *s)
   cmd = parseline(&s, es);
   peek(&s, es, "");
   if(s != es){
-    printf(2, "leftovers: %s\n", s);
+    fprintf(stderr, "leftovers: %s\n", s);
     panic("syntax");
   }
   nulterminate(cmd);
