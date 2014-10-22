@@ -7,8 +7,10 @@ use libc::funcs::posix88::fcntl;
 use libc::funcs::posix88::unistd;
 use libc::types::os::arch::c95::c_int;
 use libc::types::os::arch::posix88::{mode_t, pid_t};
+use std::fmt::{mod, Show};
 use std::io;
 
+#[deriving(Show)]
 enum Cmd<'b> {
 
     ExecCmd {
@@ -18,8 +20,8 @@ enum Cmd<'b> {
 
     RedirCmd {
         cmd:    Box<Cmd<'b>>,
-        file:   Path,
-        efile:  Path,
+        file:   PrintablePath,
+        efile:  PrintablePath,
         mode:   mode_t,
         fd:     c_int
     },
@@ -40,12 +42,22 @@ enum Cmd<'b> {
 
 }
 
+struct PrintablePath { path: Path }
+
+impl Show for PrintablePath {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let PrintablePath { ref path } = *self;
+        write!(f, "Path[{}]", path.as_str().unwrap_or(""))
+    }
+}
+
 fn run_cmd<'b>(cmd: Cmd<'b>) -> c_int {
+    debug!("{}", cmd);
     match cmd {
         ExecCmd {argv, eargv} =>
             run_exec(argv, eargv),
         RedirCmd {cmd, file, efile, mode, fd} =>
-            run_redir(cmd, file, efile, mode, fd),
+            run_redir(cmd, file.path, efile.path, mode, fd),
         PipeCmd {left, right} =>
             run_pipe(left, right),
         ListCmd {left, right} =>
