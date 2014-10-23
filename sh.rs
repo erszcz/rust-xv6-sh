@@ -174,6 +174,29 @@ fn parse_cmd<'b>(line: &'b String) -> Cmd<'b> {
     ExecCmd { argv: vec!(), eargv: vec!() }
 }
 
+fn peek(ps: &mut &str, toks: &str) -> bool {
+    let i = (*ps).chars()
+        .enumerate().position(|(_,c)| !c.is_whitespace()).unwrap_or(0);
+    *ps = (*ps).slice_from(i);
+    let c = (*ps).char_at(0);
+    toks.chars().position(|cc| c == cc).is_some()
+}
+
+#[test]
+fn peek_test() {
+    let mut s = "   (ala ma kota";
+    let p = &mut s;
+    debug!("{}, {}", peek(p, "("), *p);
+    assert!(peek(p, "("));
+    assert!(*p == "(ala ma kota");
+    debug!("{}, {}", peek(p, "<("), *p);
+    assert!(peek(p, "<("));
+    assert!(*p == "(ala ma kota");
+    debug!("{}, {}", peek(p, "<"), *p);
+    assert!(!peek(p, "<"));
+    assert!(*p == "(ala ma kota");
+}
+
 //
 // Syscalls
 //
