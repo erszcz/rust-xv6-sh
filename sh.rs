@@ -14,14 +14,12 @@ use std::io;
 enum Cmd<'b> {
 
     ExecCmd {
-        argv:   Vec<&'b str>,
-        eargv:  Vec<&'b str>
+        argv:   Vec<&'b str>
     },
 
     RedirCmd {
         cmd:    Box<Cmd<'b>>,
         file:   PrintablePath,
-        efile:  PrintablePath,
         mode:   mode_t,
         fd:     c_int
     },
@@ -54,10 +52,10 @@ impl Show for PrintablePath {
 fn run_cmd<'b>(cmd: Cmd<'b>) -> c_int {
     debug!("{}", cmd);
     match cmd {
-        ExecCmd {argv, eargv} =>
-            run_exec(argv, eargv),
-        RedirCmd {cmd, file, efile, mode, fd} =>
-            run_redir(cmd, file.path, efile.path, mode, fd),
+        ExecCmd {argv} =>
+            run_exec(argv),
+        RedirCmd {cmd, file, mode, fd} =>
+            run_redir(cmd, file.path, mode, fd),
         PipeCmd {left, right} =>
             run_pipe(left, right),
         ListCmd {left, right} =>
@@ -67,13 +65,12 @@ fn run_cmd<'b>(cmd: Cmd<'b>) -> c_int {
     }
 }
 
-fn run_exec(argv: Vec<&str>, eargv: Vec<&str>) -> c_int {
-    debug!("run_exec: argv={} eargv={}", argv, eargv);
+fn run_exec<'b>(argv: Vec<&'b str>) -> c_int {
+    debug!("run_exec: argv={}", argv);
     fail!("run_exec");
 }
 
-fn run_redir(cmd: Box<Cmd>, file: Path, efile: Path,
-             mode: mode_t, fd: c_int) -> c_int {
+fn run_redir(cmd: Box<Cmd>, file: Path, mode: mode_t, fd: c_int) -> c_int {
     fail!("run_redir")
 }
 
