@@ -10,7 +10,7 @@ use libc::types::os::arch::posix88::{mode_t, pid_t};
 use std::fmt::{mod, Show};
 use std::io;
 
-#[deriving(Show)]
+#[deriving(PartialEq, Show)]
 enum Cmd<'b> {
 
     ExecCmd {
@@ -41,6 +41,12 @@ enum Cmd<'b> {
 }
 
 struct PrintablePath { path: Path }
+
+impl PartialEq for PrintablePath {
+    fn eq(&self, other: &PrintablePath) -> bool {
+        self.path == other.path
+    }
+}
 
 impl Show for PrintablePath {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -155,7 +161,7 @@ fn process_builtin(cmd: &str, args: &[&str]) -> bool {
     }
 }
 
-// TODO: make a nice println! like macro for stderr
+// TODO: make a nice `println!` like macro for stderr
 fn stderr(msg: String) {
     let mut stderr = std::io::stderr();
     match stderr.write_str(msg.as_slice()) {
@@ -165,18 +171,203 @@ fn stderr(msg: String) {
 }
 
 fn parse_cmd<'b>(line: &'b String) -> Cmd<'b> {
-    //let s = line.as_slice();
-    //fail!("not implemented yet")
-    debug!("parse_cmd: not implemented yet");
-    ExecCmd { argv: vec!(), eargv: vec!() }
+    let cmdline : &mut &str = &mut line.as_slice();
+    let cmd = parse_line(cmdline);
+    peek(cmdline, "");
+    if *cmdline != ""
+        { fail!("leftovers: {}", *cmdline); }
+    cmd
+}
+
+fn parse_line<'b>(ps: &mut &'b str) -> Cmd<'b> {
+    let cmd = ExecCmd { argv: vec!(*ps) };
+    (*ps) = (*ps).slice_from((*ps).len());
+    cmd
+}
+
+fn parse_pipe<'b>(ps: &mut &'b str) -> Cmd<'b> {
+    let mut cmd = parse_exec();
+}
+
+#[test]
+fn parse_exec_cmd_test() {
+    let cmd = ExecCmd { argv: vec!("some_cmd") };
+    let cmdline = "some_cmd".to_string();
+    assert!(cmd == parse_cmd(&cmdline));
+}
+
+#[test]
+fn parse_pipe_cmd_test() {
+    let cmd =
+        PipeCmd { left : box ExecCmd { argv: vec!("some_cmd") },
+                  right: box PipeCmd { left : box ExecCmd { argv: vec!("other_cmd") },
+                                       right: box ExecCmd { argv: vec!("another_cmd") }}};
+    let cmdline = "some_cmd | other_cmd | another_cmd".to_string();
+    assert!(cmd == parse_cmd(&cmdline));
 }
 
 fn peek(ps: &mut &str, toks: &str) -> bool {
+    if *ps == ""
+        { return false }
     let i = (*ps).chars()
-        .enumerate().position(|(_,c)| !c.is_whitespace()).unwrap_or(0);
+        .enumerate().position(|(_,c)| !c.is_whitespace()).unwrap_or((*ps).len());
     *ps = (*ps).slice_from(i);
     let c = (*ps).char_at(0);
     toks.chars().position(|cc| c == cc).is_some()
+}
+
+#[deriving(Show, PartialEq)]
+enum TokenKind {
+    LRedir,
+    RRedir,
+    Append,
+    Regular
+}
+
+#[deriving(Show)]
+struct Token<'b> {
+    kind: TokenKind,
+    buf: &'b str
+}
+
+fn get_token<'b>(ps: &mut &'b str) -> Option<Token<'b>> {
+    let mut s = *ps;
+    while s.len() > 0 && s.char_at(0).is_whitespace()
+        { s = next_char(ps); }
+    if s.len() == 0
+        { return None }
+    let c = s.char_at(0);
+    let res = match c {
+        '|' | '(' | ')' | ';' | '&' | '<' => {
+            let t = s;
+            s = next_char(ps);
+            Token { kind: if c == '<' { LRedir } else { Regular },
+                    buf: t.slice_to(1) }
+        },
+        '>' => {
+            let t = s;
+            s = next_char(ps);
+            if s.len() > 0 && s.char_at(0) == '>' {
+                s = next_char(ps);
+                Token { kind: Append, buf: t.slice_to(2) }
+            } else {
+                Token { kind: RRedir, buf: t.slice_to(1) }
+            }
+        },
+        _ => {
+            let maybe_to = s.chars() .position(|c| c.is_whitespace() || is_symbol(c));
+            let end = match maybe_to {
+                None => s.len(),
+                Some (idx) => idx
+            };
+            let t = s;
+            s = s.slice_from(end);
+            (*ps) = s;
+            Token { kind: Regular, buf: t.slice_to(end) }
+        }
+    };
+    while s.len() > 0 && s.char_at(0).is_whitespace()
+        { s = next_char(ps); }
+    Some (res)
+}
+
+#[test]
+fn get_token_simple_command_test() {
+    let mut s = "/bin/echo a";
+    let p = &mut s;
+    {
+        let tok = get_token(p).unwrap();
+        println!("kind    : {}", tok.kind);
+        println!("parsed  : {}", *p);
+        println!("token   : {}", tok.buf);
+        assert!(tok.kind == Regular);
+        assert!(*p == "a");
+        assert!(tok.buf == "/bin/echo");
+    }
+    {
+        let tok = get_token(p).unwrap();
+        println!("kind    : {}", tok.kind);
+        println!("p len   : {}", (*p).len());
+        println!("parsed  : {}", if (*p).len() == 0 { "(empty)" } else { *p });
+        println!("token   : {}", tok.buf);
+        assert!(tok.kind == Regular);
+        assert!(*p == "");
+        assert!(tok.buf == "a");
+    }
+}
+
+#[test]
+fn get_token_lredir_test() {
+    let mut s = "/bin/echo < a";
+    let p = &mut s;
+    get_token(p);
+    {
+        let tok = get_token(p).unwrap();
+        println!("kind    : {}", tok.kind);
+        println!("parsed  : {}", *p);
+        println!("token   : {}", tok.buf);
+        assert!(tok.kind == LRedir);
+        assert!(*p == "a");
+        assert!(tok.buf == "<");
+    }
+}
+
+#[test]
+fn get_token_rredir_test() {
+    let mut s = "/bin/echo > a";
+    let p = &mut s;
+    get_token(p);
+    {
+        let tok = get_token(p).unwrap();
+        println!("kind    : {}", tok.kind);
+        println!("parsed  : {}", *p);
+        println!("token   : {}", tok.buf);
+        assert!(tok.kind == RRedir);
+        assert!(*p == "a");
+        assert!(tok.buf == ">");
+    }
+}
+
+#[test]
+fn get_token_append_test() {
+    let mut s = "/bin/echo >> a";
+    let p = &mut s;
+    get_token(p);
+    {
+        let tok = get_token(p).unwrap();
+        println!("kind    : {}", tok.kind);
+        println!("parsed  : {}", *p);
+        println!("token   : {}", tok.buf);
+        println!("tok len : {}", tok.buf.len());
+        assert!(tok.kind == Append);
+        assert!(*p == "a");
+        assert!(tok.buf == ">>");
+        assert!(tok.buf.len() == 2);
+    }
+}
+
+fn next_char<'b>(ps: &mut &'b str) -> &'b str {
+    *ps = (*ps).slice_from(1);
+    *ps
+}
+
+#[test]
+fn next_char_test() {
+    let mut s = "abc";
+    {
+        let p = &mut s;
+        let t = next_char(p);
+        assert!(*p == "bc");
+        assert!(t == "bc");
+    }
+    assert!(s == "bc");
+}
+
+fn is_symbol(c: char) -> bool {
+    match "<|>&;()".chars().position(|d| d == c) {
+        None => false,
+        Some (_) => true
+    }
 }
 
 #[test]
