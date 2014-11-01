@@ -167,6 +167,9 @@ getcmd(char *buf, int nbuf)
   return 0;
 }
 
+void printcmd_deep(struct cmd *cmd, int level);
+void printcmd(struct cmd *cmd) { printcmd_deep(cmd, 0); }
+
 int
 main(void)
 {
@@ -191,11 +194,83 @@ main(void)
         fprintf(stderr, "cannot cd %s\n", buf+3);
       continue;
     }
-    if(fork1() == 0)
-      runcmd(parsecmd(buf));
+    if(fork1() == 0) {
+      struct cmd *cmd = parsecmd(buf);
+      printcmd(cmd);
+      runcmd(cmd);
+    }
     wait();
   }
   exit(0);
+}
+
+char *indent(int level) {
+  char *buf = "                                                          ";
+  int maxbuf = strlen(buf);
+  if (level <= maxbuf) {
+    return buf + maxbuf - level;
+  } else {
+    return buf;
+  }
+}
+
+void
+printcmd_deep(struct cmd *cmd, int level) {
+  struct backcmd *bcmd;
+  struct execcmd *ecmd;
+  struct listcmd *lcmd;
+  struct pipecmd *pcmd;
+  struct redircmd *rcmd;
+  int i;
+  char *cmdname;
+
+  if(cmd == 0)
+    exit(0);
+  
+  switch(cmd->type){
+  default:
+    panic("printcmd");
+
+  case EXEC:
+    ecmd = (struct execcmd*)cmd;
+    cmdname = "execcmd";
+    fprintf(stderr, "%s%s {}\n", indent(level), cmdname);
+    break;
+
+  case REDIR:
+    rcmd = (struct redircmd*)cmd;
+    cmdname = "redircmd";
+    fprintf(stderr, "%s%s {\n", indent(level), cmdname);
+    printcmd_deep(rcmd->cmd, level+2);
+    fprintf(stderr, "%s}\n", indent(level), cmdname);
+    break;
+
+  case LIST:
+    lcmd = (struct listcmd*)cmd;
+    cmdname = "listcmd";
+    fprintf(stderr, "%s%s {\n", indent(level), cmdname);
+    printcmd_deep(lcmd->left, level+2);
+    printcmd_deep(lcmd->right, level+2);
+    fprintf(stderr, "%s}\n", indent(level), cmdname);
+    break;
+
+  case PIPE:
+    pcmd = (struct pipecmd*)cmd;
+    cmdname = "pipecmd";
+    fprintf(stderr, "%s%s {\n", indent(level), cmdname);
+    printcmd_deep(pcmd->left, level+2);
+    printcmd_deep(pcmd->right, level+2);
+    fprintf(stderr, "%s}\n", indent(level), cmdname);
+    break;
+    
+  case BACK:
+    bcmd = (struct backcmd*)cmd;
+    cmdname = "backcmd";
+    fprintf(stderr, "%s%s {\n", indent(level), cmdname);
+    printcmd_deep(bcmd->cmd, level+2);
+    fprintf(stderr, "%s}\n", indent(level), cmdname);
+    break;
+  }
 }
 
 void
@@ -295,6 +370,8 @@ gettoken(char **ps, char *es, char **q, char **eq)
   char *s;
   int ret;
   
+  /*fprintf(stderr, "gettoken: %s q: %s\n", *ps, *q);*/
+
   s = *ps;
   while(s < es && strchr(whitespace, *s))
     s++;
@@ -338,6 +415,8 @@ int
 peek(char **ps, char *es, char *toks)
 {
   char *s;
+
+  /*fprintf(stderr, "peek: %s toks: %s\n", *ps, toks);*/
   
   s = *ps;
   while(s < es && strchr(whitespace, *s))
@@ -357,6 +436,8 @@ parsecmd(char *s)
   char *es;
   struct cmd *cmd;
 
+  /*fprintf(stderr, "parsecmd: %s\n", s);*/
+
   es = s + strlen(s);
   cmd = parseline(&s, es);
   peek(&s, es, "");
@@ -372,6 +453,8 @@ struct cmd*
 parseline(char **ps, char *es)
 {
   struct cmd *cmd;
+
+  /*fprintf(stderr, "parseline: %s\n", *ps);*/
 
   cmd = parsepipe(ps, es);
   while(peek(ps, es, "&")){
@@ -390,6 +473,8 @@ parsepipe(char **ps, char *es)
 {
   struct cmd *cmd;
 
+  /*fprintf(stderr, "parsepipe: %s\n", *ps);*/
+
   cmd = parseexec(ps, es);
   if(peek(ps, es, "|")){
     gettoken(ps, es, 0, 0);
@@ -403,6 +488,8 @@ parseredirs(struct cmd *cmd, char **ps, char *es)
 {
   int tok;
   char *q, *eq;
+
+  /*fprintf(stderr, "parsedirs: %s\n", *ps);*/
 
   while(peek(ps, es, "<>")){
     tok = gettoken(ps, es, 0, 0);
@@ -428,6 +515,8 @@ parseblock(char **ps, char *es)
 {
   struct cmd *cmd;
 
+  /*fprintf(stderr, "parseblock: %s\n", *ps);*/
+
   if(!peek(ps, es, "("))
     panic("parseblock");
   gettoken(ps, es, 0, 0);
@@ -447,6 +536,8 @@ parseexec(char **ps, char *es)
   struct execcmd *cmd;
   struct cmd *ret;
   
+  /*fprintf(stderr, "parseexec: %s\n", *ps);*/
+
   if(peek(ps, es, "("))
     return parseblock(ps, es);
 
