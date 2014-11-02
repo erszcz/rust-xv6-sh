@@ -2,7 +2,7 @@
 #[phase(plugin, link)] extern crate log;
 extern crate libc;
 
-use libc::consts::os::posix88::O_RDWR;
+use libc::consts::os::posix88::{O_RDONLY, O_WRONLY, O_RDWR, O_CREAT};
 use libc::funcs::posix88::fcntl;
 use libc::funcs::posix88::unistd;
 use libc::types::os::arch::c95::c_int;
@@ -10,7 +10,7 @@ use libc::types::os::arch::posix88::{mode_t, pid_t};
 use std::fmt::{mod, Show};
 use std::io;
 
-#[deriving(PartialEq, Show)]
+#[deriving(Clone, PartialEq, Show)]
 enum Cmd<'b> {
 
     ExecCmd {
@@ -40,6 +40,7 @@ enum Cmd<'b> {
 
 }
 
+#[deriving(Clone)]
 struct PrintablePath { path: Path }
 
 impl PartialEq for PrintablePath {
@@ -185,15 +186,92 @@ fn parse_line<'b>(ps: &mut &'b str) -> Cmd<'b> {
     cmd
 }
 
-fn parse_pipe<'b>(ps: &mut &'b str) -> Cmd<'b> {
-    let mut cmd = parse_exec();
+//fn parse_pipe<'b>(ps: &mut &'b str) -> Cmd<'b> {
+//    let mut cmd = parse_exec();
+//}
+
+fn parse_redirs<'b>(cmd: Cmd<'b>, ps: &mut &'b str) -> Cmd<'b> {
+    while peek(ps, "<>") {
+        // peek() returned true, unwrap can't fail
+        let tok1 = get_token(ps).unwrap();
+        let maybe_tok2 = get_token(ps);
+        if maybe_tok2.is_none()
+            { fail!("missing file for redirection") }
+        let tok2 = maybe_tok2.unwrap();
+        if tok2.kind != Regular
+            { fail!("expected regular token") }
+        let (mode, fd) = match tok1.kind {
+            Regular => fail!("expected special symbol"),
+            LRedir => (O_RDONLY as mode_t, 0 as i32),
+            RRedir => ((O_WRONLY | O_CREAT) as mode_t, 1 as i32),
+            Append => ((O_WRONLY | O_CREAT) as mode_t, 1 as i32)
+        };
+        return RedirCmd { cmd: box cmd,
+                          file: PrintablePath { path: Path::new(tok2.buf) },
+                          mode: mode,
+                          fd: fd }
+    }
+    cmd
 }
 
 #[test]
-fn parse_exec_cmd_test() {
+fn parse_redir_test() {
+    let execcmd = ExecCmd { argv: vec!("some_cmd") };
+    let mut s = " > some_file";
+    let p = &mut s;
+    let redircmd = parse_redirs(execcmd.clone(), p);
+    assert!(redircmd == RedirCmd { cmd: box execcmd,
+                                   file: PrintablePath { path: Path::new("some_file") },
+                                   mode: (O_WRONLY | O_CREAT) as mode_t,
+                                   fd: 1 as i32 });
+}
+
+fn parse_block<'b>(ps: &mut &'b str) -> Cmd<'b> {
+    if !peek(ps, "(")
+        { fail!("parse_block") }
+    get_token(ps);
+    let inner_cmd = parse_line(ps);
+    if !peek(ps, ")")
+        { fail!("syntax - missing )") }
+    get_token(ps);
+    parse_redirs(inner_cmd, ps)
+}
+
+fn parse_exec<'b>(ps: &mut &'b str) -> Cmd<'b> {
+    if peek(ps, "(")
+        { return parse_block(ps) }
+    let mut argv = vec!();
+    let mut ret = parse_redirs(ExecCmd { argv: argv.clone() }, ps);
+    while !peek(ps, "|)&;") {
+        match get_token(ps) {
+            None => break,
+            Some (token) => {
+                if token.kind != Regular
+                    { fail!("syntax - expected regular token") }
+                argv.push(token.buf);
+                ret = parse_redirs(ExecCmd { argv: argv.clone() }, ps);
+            }
+        }
+    }
+    ret
+}
+
+#[test]
+fn parse_exec_simple_test() {
     let cmd = ExecCmd { argv: vec!("some_cmd") };
     let cmdline = "some_cmd".to_string();
     assert!(cmd == parse_cmd(&cmdline));
+}
+
+#[test]
+fn parse_exec_block_test() {
+    let mut s = "(some_cmd | other_cmd)";
+    let ps = &mut s;
+    let cmd = PipeCmd { left : box ExecCmd { argv: vec!("some_cmd") },
+                        right: box ExecCmd { argv: vec!("other_cmd") } };
+    let parsed = parse_exec(ps);
+    println!("{}", parsed);
+    assert!(cmd == parsed);
 }
 
 #[test]
