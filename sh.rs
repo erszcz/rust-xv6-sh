@@ -3,12 +3,15 @@
 extern crate libc;
 
 use libc::consts::os::posix88::{O_RDONLY, O_WRONLY, O_RDWR, O_CREAT};
+use libc::funcs::c95::stdlib;
 use libc::funcs::posix88::fcntl;
 use libc::funcs::posix88::unistd;
 use libc::types::os::arch::c95::c_int;
 use libc::types::os::arch::posix88::{mode_t, pid_t};
+use std::c_str::CString;
 use std::fmt::{mod, Show};
 use std::io;
+use std::mem;
 
 #[deriving(Clone, PartialEq, Show)]
 enum Cmd<'b> {
@@ -56,7 +59,7 @@ impl Show for PrintablePath {
     }
 }
 
-fn run_cmd<'b>(cmd: Cmd<'b>) -> c_int {
+fn run_cmd<'b>(cmd: Cmd<'b>) {
     debug!("{}", cmd);
     match cmd {
         ExecCmd {argv} =>
@@ -70,26 +73,30 @@ fn run_cmd<'b>(cmd: Cmd<'b>) -> c_int {
         BackCmd {cmd} =>
             run_back(cmd)
     }
+    exit(0);
 }
 
-fn run_exec<'b>(argv: Vec<&'b str>) -> c_int {
-    debug!("run_exec: argv={}", argv);
-    fail!("run_exec");
+fn run_exec<'b>(argv: Vec<&'b str>) {
+    if argv.len() == 0
+        { exit(0) }
+    let path = Path::new(argv[0]);
+    execv(path.clone(), argv);
+    stderr(format!("execv {} failed\n", path.as_str()));
 }
 
-fn run_redir(cmd: Box<Cmd>, file: Path, mode: mode_t, fd: c_int) -> c_int {
+fn run_redir(cmd: Box<Cmd>, file: Path, mode: mode_t, fd: c_int) {
     fail!("run_redir")
 }
 
-fn run_pipe(left: Box<Cmd>, right: Box<Cmd>) -> c_int {
+fn run_pipe(left: Box<Cmd>, right: Box<Cmd>) {
     fail!("run_pipe")
 }
 
-fn run_list(left: Box<Cmd>, right: Box<Cmd>) -> c_int {
+fn run_list(left: Box<Cmd>, right: Box<Cmd>) {
     fail!("run_list")
 }
 
-fn run_back(cmd: Box<Cmd>) -> c_int {
+fn run_back(cmd: Box<Cmd>) {
     fail!("run_back")
 }
 
@@ -135,7 +142,9 @@ fn process_line(line: String) {
     if process_builtin(cmd_args[0], cmd_args[1..])
         { return }
     if fork_or_fail() == 0 {
-        run_cmd(parse_cmd(&line));
+        let cmd = parse_cmd(&line);
+        println!("{}", cmd);
+        run_cmd(cmd);
     }
     let reaped = wait();
     if reaped == -1 {
@@ -181,14 +190,27 @@ fn parse_cmd<'b>(line: &'b String) -> Cmd<'b> {
 }
 
 fn parse_line<'b>(ps: &mut &'b str) -> Cmd<'b> {
-    let cmd = ExecCmd { argv: vec!(*ps) };
-    (*ps) = (*ps).slice_from((*ps).len());
+    let mut cmd = parse_pipe(ps);
+    while peek(ps, "&") {
+        get_token(ps);
+        cmd = BackCmd { cmd: box cmd };
+    }
+    if peek(ps, ";") {
+        get_token(ps);
+        cmd = ListCmd { left: box cmd, right: box parse_line(ps) };
+    }
     cmd
 }
 
-//fn parse_pipe<'b>(ps: &mut &'b str) -> Cmd<'b> {
-//    let mut cmd = parse_exec();
-//}
+fn parse_pipe<'b>(ps: &mut &'b str) -> Cmd<'b> {
+    let execcmd = parse_exec(ps);
+    if peek(ps, "|") {
+        get_token(ps);
+        PipeCmd { left: box execcmd, right: box parse_pipe(ps) }
+    } else {
+        execcmd
+    }
+}
 
 fn parse_redirs<'b>(cmd: Cmd<'b>, ps: &mut &'b str) -> Cmd<'b> {
     while peek(ps, "<>") {
@@ -276,16 +298,19 @@ fn parse_exec_block_test() {
 
 #[test]
 fn parse_pipe_cmd_test() {
+    let mut s = "some_cmd | other_cmd | another_cmd";
+    let ps = &mut s;
     let cmd =
         PipeCmd { left : box ExecCmd { argv: vec!("some_cmd") },
                   right: box PipeCmd { left : box ExecCmd { argv: vec!("other_cmd") },
                                        right: box ExecCmd { argv: vec!("another_cmd") }}};
-    let cmdline = "some_cmd | other_cmd | another_cmd".to_string();
-    assert!(cmd == parse_cmd(&cmdline));
+    let parsed = parse_pipe(ps);
+    println!("{}", parsed);
+    assert!(cmd == parsed);
 }
 
 fn peek(ps: &mut &str, toks: &str) -> bool {
-    if *ps == ""
+    if (*ps).len() == 0
         { return false }
     let i = (*ps).chars()
         .enumerate().position(|(_,c)| !c.is_whitespace()).unwrap_or((*ps).len());
@@ -468,27 +493,19 @@ fn peek_test() {
 //
 
 fn open(path: Path, oflag: c_int, mode: mode_t) -> c_int {
-    unsafe {
-        path.with_c_str(|c_path| fcntl::open(c_path, oflag, mode))
-    }
+    unsafe { path.with_c_str(|c_path| fcntl::open(c_path, oflag, mode)) }
 }
 
 fn close(fd: c_int) -> c_int {
-    unsafe {
-        unistd::close(fd)
-    }
+    unsafe { unistd::close(fd) }
 }
 
 fn chdir(dir: Path) -> c_int {
-    unsafe {
-        dir.with_c_str(|c_dir| unistd::chdir(c_dir))
-    }
+    unsafe { dir.with_c_str(|c_dir| unistd::chdir(c_dir)) }
 }
 
 fn fork() -> pid_t {
-    unsafe {
-        unistd::fork()
-    }
+    unsafe { unistd::fork() }
 }
 
 fn fork_or_fail() -> pid_t {
@@ -509,7 +526,23 @@ mod syscalls {
 }
 
 fn wait() -> pid_t {
+    unsafe { syscalls::wait(0 as *mut c_int) }
+}
+
+fn exit(status: c_int) -> ! {
+    unsafe { stdlib::exit(status) }
+}
+
+fn execv(path: Path, args: Vec<&str>) -> c_int {
+    // We need to have valid CString instances for .as_ptr()s to be valid.
+    // See http://doc.rust-lang.org/std/c_str/struct.CString.html#method.as_ptr
+    let cstrings : Vec<CString> = args.iter().map(|s| s.to_c_str()).collect();
+    let mut argv : Vec<*const i8> = cstrings.iter().map(|s| s.as_ptr()).collect();
+    argv.push(0 as *const i8);
+    println!("argv: {}", argv);
     unsafe {
-        syscalls::wait(0 as *mut c_int)
+        path.with_c_str(|c_path| {
+            unistd::execv( c_path, argv.as_mut_slice().as_mut_ptr() )
+        })
     }
 }
