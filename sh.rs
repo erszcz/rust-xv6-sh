@@ -183,7 +183,7 @@ fn main() {
                 error!("cannot get_line: {}", e);
                 break
             },
-            Ok (line) => process_line(line)
+            Ok (line) => process_line(line.trim())
         }
     }
 }
@@ -198,39 +198,43 @@ fn get_line() -> io::IoResult<String> {
     stdin.read_line()
 }
 
-fn process_line(line: String) {
-    let cmd_args : Vec<&str> = split_line(&line);
-    if cmd_args.len() == 0
+fn process_line(line: &str) {
+    if line.len() == 0
         { return }
+    let cmd_args : Vec<&str> = split_line(line);
     if process_builtin(cmd_args[0], cmd_args[1..])
         { return }
     if fork_or_fail() == 0 {
-        let cmd = parse_cmd(&line);
+        let cmd = parse_cmd(line);
         stderr(format!("{}\n", cmd));
         run_cmd(cmd);
     }
     wait();
 }
 
-fn split_line<'b>(line: &'b String) -> Vec<&'b str> {
-    line.as_slice().split(|c: char| c.is_whitespace()).collect()
+fn split_line<'b>(line: &'b str) -> Vec<&'b str> {
+    line.split(|c: char| c.is_whitespace()).collect()
 }
 
 fn process_builtin(cmd: &str, args: &[&str]) -> bool {
     match cmd {
-        "cd" => {
-            let dir_str = args[1..];
-            if dir_str.len() > 1
-                { debug!("cd: ignoring {}", dir_str[1..]); }
-            // TODO: case with `cd` and no args at all is not handled!
-            let dir = Path::new(dir_str[0]);
-            debug!("cd {}", dir_str[0]);
-            if chdir(dir) < 0
-                { stderr(format!("cannot cd {}\n", dir_str)) };
-            true
-        }
+        "cd" => builtin_cd(args),
         _ => false
     }
+}
+
+fn builtin_cd(args: &[&str]) -> bool {
+    let dir = match (args.len(), std::os::getenv("HOME")) {
+        (0, None) => {
+            stderr(format!("rsh: cannot cd\n"));
+            return true
+        },
+        (0, Some (home)) => Path::new(home.as_slice()),
+        (_, _) => Path::new(args[0])
+    };
+    if chdir(dir.clone()) < 0
+        { stderr(format!("cannot cd {}\n", dir.display())) };
+    true
 }
 
 // TODO: make a nice `println!` like macro for stderr
@@ -242,8 +246,8 @@ fn stderr(msg: String) {
     }
 }
 
-fn parse_cmd<'b>(line: &'b String) -> Cmd<'b> {
-    let cmdline : &mut &str = &mut line.as_slice();
+fn parse_cmd<'b>(line: &'b str) -> Cmd<'b> {
+    let cmdline : &mut &str = &mut line.clone();
     let cmd = parse_line(cmdline);
     peek(cmdline, "");
     if *cmdline != ""
