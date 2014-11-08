@@ -149,6 +149,7 @@ fn main() {
     // Read and run input commands.
     loop {
         match get_line() {
+            Err (ref e) if e.kind == io::EndOfFile => break,
             Err (e) => {
                 error!("cannot get_line: {}", e);
                 break
@@ -162,15 +163,14 @@ fn get_line() -> io::IoResult<String> {
     let mut stdout = io::stdout();
     match stdout.write_str("rsh $ ") {
         Err (e) => fail!("cannot write to stdout: {}", e),
-        Ok (()) => stdout.flush()
+        Ok (()) => if stdout.flush().is_err() { fail!("flush") }
     };
     let mut stdin = io::stdin();
     stdin.read_line()
 }
 
 fn process_line(line: String) {
-    let cmd_args : Vec<&str> =
-        line.as_slice().split(|c: char| c.is_whitespace()).collect();
+    let cmd_args : Vec<&str> = split_line(&line);
     if cmd_args.len() == 0
         { return }
     if process_builtin(cmd_args[0], cmd_args[1..])
@@ -180,12 +180,11 @@ fn process_line(line: String) {
         stderr(format!("{}\n", cmd));
         run_cmd(cmd);
     }
-    let reaped = wait();
-    if reaped == -1 {
-        fail!("cannot wait");
-    } else {
-        debug!("reaped {}", reaped);
-    }
+    wait();
+}
+
+fn split_line<'b>(line: &'b String) -> Vec<&'b str> {
+    line.as_slice().split(|c: char| c.is_whitespace()).collect()
 }
 
 fn process_builtin(cmd: &str, args: &[&str]) -> bool {
@@ -560,7 +559,12 @@ mod syscalls {
 }
 
 fn wait() -> pid_t {
-    unsafe { syscalls::wait(0 as *mut c_int) }
+    unsafe {
+        match syscalls::wait(0 as *mut c_int) {
+            -1 => fail!("cannot wait"),
+            pid => { debug!("reaped {}", pid); pid }
+        }
+    }
 }
 
 fn exit(status: c_int) -> ! {
@@ -592,5 +596,10 @@ fn pipe() -> Option<(c_int, c_int)> {
 }
 
 fn dup(fd: c_int) -> c_int {
-    unsafe { unistd::dup(fd) }
+    unsafe {
+        match unistd::dup(fd) {
+            -1 => fail!("cannot dup"),
+            newfd => newfd
+        }
+    }
 }
