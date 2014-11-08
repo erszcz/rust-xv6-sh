@@ -12,7 +12,6 @@ use libc::types::os::arch::posix88::{mode_t, pid_t};
 use std::c_str::CString;
 use std::fmt::{mod, Show};
 use std::io;
-use std::mem;
 
 const S_IRGRP: mode_t = 0o40;
 const S_IROTH: mode_t = 0o04;
@@ -99,7 +98,28 @@ fn run_redir(cmd: Box<Cmd>, file: Path, oflags: c_int, fd: c_int) {
 }
 
 fn run_pipe(left: Box<Cmd>, right: Box<Cmd>) {
-    fail!("run_pipe")
+    let p = match pipe() {
+        None => fail!("pipe"),
+        Some (fds) => fds
+    };
+    if fork_or_fail() == 0 {
+        close(1);
+        dup(p.val1());
+        close(p.val0());
+        close(p.val1());
+        run_cmd(*left);
+    }
+    if fork_or_fail() == 0 {
+        close(0);
+        dup(p.val0());
+        close(p.val0());
+        close(p.val1());
+        run_cmd(*right);
+    }
+    close(p.val0());
+    close(p.val1());
+    wait();
+    wait();
 }
 
 fn run_list(left: Box<Cmd>, right: Box<Cmd>) {
@@ -559,4 +579,18 @@ fn execv(path: Path, args: Vec<&str>) -> c_int {
             unistd::execv( c_path, argv.as_mut_slice().as_mut_ptr() )
         })
     }
+}
+
+fn pipe() -> Option<(c_int, c_int)> {
+    unsafe {
+        let mut fds = [0,0];
+        if unistd::pipe(fds.as_mut_ptr()) < 0
+            { None }
+        else
+            { Some ((fds[0], fds[1])) }
+    }
+}
+
+fn dup(fd: c_int) -> c_int {
+    unsafe { unistd::dup(fd) }
 }
