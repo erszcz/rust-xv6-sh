@@ -4,8 +4,7 @@ extern crate libc;
 
 mod sh {
 
-    use libc::consts::os::posix88::{O_RDONLY, O_WRONLY, O_CREAT,
-                                    S_IRUSR, S_IWUSR};
+    use libc::consts::os::posix88;
     use libc::funcs::c95::stdlib;
     use libc::funcs::posix88::fcntl;
     use libc::funcs::posix88::unistd;
@@ -17,6 +16,15 @@ mod sh {
     use std::io;
     use std::io::fs::PathExtensions;
 
+    #[cfg(test)]
+    mod test;
+
+    const O_RDONLY: c_int = posix88::O_RDONLY;
+    const O_WRONLY: c_int = posix88::O_WRONLY;
+    const O_CREATE: c_int = posix88::O_CREAT;
+
+    const S_IRUSR: mode_t = posix88::S_IRUSR;
+    const S_IWUSR: mode_t = posix88::S_IWUSR;
     const S_IRGRP: mode_t = 0o40;
     const S_IROTH: mode_t = 0o04;
 
@@ -270,8 +278,8 @@ mod sh {
             let (oflags, fd) = match tok1.kind {
                 Regular => panic!("expected special symbol"),
                 LRedir => (O_RDONLY, 0 as i32),
-                RRedir => (O_WRONLY | O_CREAT, 1 as i32),
-                Append => (O_WRONLY | O_CREAT, 1 as i32)
+                RRedir => (O_WRONLY | O_CREATE, 1 as i32),
+                Append => (O_WRONLY | O_CREATE, 1 as i32)
             };
             return RedirCmd { cmd: box cmd,
                               file: PrintablePath { path: Path::new(tok2.buf) },
@@ -279,18 +287,6 @@ mod sh {
                               fd: fd }
         }
         cmd
-    }
-
-    #[test]
-    fn parse_redir_test() {
-        let execcmd = ExecCmd { argv: vec!("some_cmd") };
-        let mut s = " > some_file";
-        let p = &mut s;
-        let redircmd = parse_redirs(execcmd.clone(), p);
-        assert!(redircmd == RedirCmd { cmd: box execcmd,
-                                       file: PrintablePath { path: Path::new("some_file") },
-                                       oflags: O_WRONLY | O_CREAT,
-                                       fd: 1 as i32 });
     }
 
     fn parse_block<'b>(ps: &mut &'b str) -> Cmd<'b> {
@@ -321,37 +317,6 @@ mod sh {
             }
         }
         ret
-    }
-
-    #[test]
-    fn parse_exec_simple_test() {
-        let cmd = ExecCmd { argv: vec!("some_cmd") };
-        let cmdline = "some_cmd";
-        assert!(cmd == parse_cmd(cmdline));
-    }
-
-    #[test]
-    fn parse_exec_block_test() {
-        let mut s = "(some_cmd | other_cmd)";
-        let ps = &mut s;
-        let cmd = PipeCmd { left : box ExecCmd { argv: vec!("some_cmd") },
-                            right: box ExecCmd { argv: vec!("other_cmd") } };
-        let parsed = parse_exec(ps);
-        println!("{}", parsed);
-        assert!(cmd == parsed);
-    }
-
-    #[test]
-    fn parse_pipe_cmd_test() {
-        let mut s = "some_cmd | other_cmd | another_cmd";
-        let ps = &mut s;
-        let cmd =
-            PipeCmd { left : box ExecCmd { argv: vec!("some_cmd") },
-                      right: box PipeCmd { left : box ExecCmd { argv: vec!("other_cmd") },
-                                           right: box ExecCmd { argv: vec!("another_cmd") }}};
-        let parsed = parse_pipe(ps);
-        println!("{}", parsed);
-        assert!(cmd == parsed);
     }
 
     fn peek(ps: &mut &str, toks: &str) -> bool {
@@ -419,96 +384,9 @@ mod sh {
         Some (res)
     }
 
-    #[test]
-    fn get_token_simple_command_test() {
-        let mut s = "/bin/echo a";
-        let p = &mut s;
-        {
-            let tok = get_token(p).unwrap();
-            println!("kind    : {}", tok.kind);
-            println!("parsed  : {}", *p);
-            println!("token   : {}", tok.buf);
-            assert!(tok.kind == Regular);
-            assert!(*p == "a");
-            assert!(tok.buf == "/bin/echo");
-        }
-        {
-            let tok = get_token(p).unwrap();
-            println!("kind    : {}", tok.kind);
-            println!("p len   : {}", (*p).len());
-            println!("parsed  : {}", if (*p).len() == 0 { "(empty)" } else { *p });
-            println!("token   : {}", tok.buf);
-            assert!(tok.kind == Regular);
-            assert!(*p == "");
-            assert!(tok.buf == "a");
-        }
-    }
-
-    #[test]
-    fn get_token_lredir_test() {
-        let mut s = "/bin/echo < a";
-        let p = &mut s;
-        get_token(p);
-        {
-            let tok = get_token(p).unwrap();
-            println!("kind    : {}", tok.kind);
-            println!("parsed  : {}", *p);
-            println!("token   : {}", tok.buf);
-            assert!(tok.kind == LRedir);
-            assert!(*p == "a");
-            assert!(tok.buf == "<");
-        }
-    }
-
-    #[test]
-    fn get_token_rredir_test() {
-        let mut s = "/bin/echo > a";
-        let p = &mut s;
-        get_token(p);
-        {
-            let tok = get_token(p).unwrap();
-            println!("kind    : {}", tok.kind);
-            println!("parsed  : {}", *p);
-            println!("token   : {}", tok.buf);
-            assert!(tok.kind == RRedir);
-            assert!(*p == "a");
-            assert!(tok.buf == ">");
-        }
-    }
-
-    #[test]
-    fn get_token_append_test() {
-        let mut s = "/bin/echo >> a";
-        let p = &mut s;
-        get_token(p);
-        {
-            let tok = get_token(p).unwrap();
-            println!("kind    : {}", tok.kind);
-            println!("parsed  : {}", *p);
-            println!("token   : {}", tok.buf);
-            println!("tok len : {}", tok.buf.len());
-            assert!(tok.kind == Append);
-            assert!(*p == "a");
-            assert!(tok.buf == ">>");
-            assert!(tok.buf.len() == 2);
-        }
-    }
-
     fn next_char<'b>(ps: &mut &'b str) -> &'b str {
         *ps = (*ps).slice_from(1);
         *ps
-    }
-
-    #[test]
-    fn next_char_test() {
-        let mut s = "abc";
-        {
-            let p = &mut s;
-            let t = next_char(p);
-            assert!(*p == "bc");
-            assert!(t == "bc");
-        }
-        assert!(s == "bc");
     }
 
     fn is_symbol(c: char) -> bool {
@@ -516,21 +394,6 @@ mod sh {
             None => false,
             Some (_) => true
         }
-    }
-
-    #[test]
-    fn peek_test() {
-        let mut s = "   (ala ma kota";
-        let p = &mut s;
-        debug!("{}, {}", peek(p, "("), *p);
-        assert!(peek(p, "("));
-        assert!(*p == "(ala ma kota");
-        debug!("{}, {}", peek(p, "<("), *p);
-        assert!(peek(p, "<("));
-        assert!(*p == "(ala ma kota");
-        debug!("{}, {}", peek(p, "<"), *p);
-        assert!(!peek(p, "<"));
-        assert!(*p == "(ala ma kota");
     }
 
     //
