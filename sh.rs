@@ -2,7 +2,7 @@
 #[phase(plugin, link)] extern crate log;
 extern crate libc;
 
-use libc::consts::os::posix88::{O_RDONLY, O_WRONLY, O_RDWR, O_CREAT,
+use libc::consts::os::posix88::{O_RDONLY, O_WRONLY, O_CREAT,
                                 S_IRUSR, S_IWUSR};
 use libc::funcs::c95::stdlib;
 use libc::funcs::posix88::fcntl;
@@ -164,17 +164,6 @@ fn run_back(cmd: Box<Cmd>) {
 }
 
 fn main() {
-    // Assumes three file descriptors open.
-    loop {
-        let fd = open(Path::new("console"), O_RDWR, 0);
-        if fd < 0
-            { break }
-        if fd >= 3 {
-            close(fd);
-            break
-        }
-    }
-
     // Read and run input commands.
     loop {
         match get_line() {
