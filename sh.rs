@@ -250,12 +250,12 @@ fn parse_redirs<'b>(cmd: Cmd<'b>, ps: &mut &'b str) -> Cmd<'b> {
     while peek(ps, "<>") {
         // peek() returned true, unwrap can't fail
         let tok1 = get_token(ps).unwrap();
-        let maybe_tok2 = get_token(ps);
-        if maybe_tok2.is_none()
-            { fail!("missing file for redirection") }
-        let tok2 = maybe_tok2.unwrap();
-        if tok2.kind != Regular
-            { fail!("expected regular token") }
+        let tok2 = match get_token(ps) {
+            None => fail!("missing file for redirection"),
+            Some (tok) =>
+                if tok.kind != Regular { fail!("expected regular token") }
+                else { tok }
+        };
         let (oflags, fd) = match tok1.kind {
             Regular => fail!("expected special symbol"),
             LRedir => (O_RDONLY, 0 as i32),
