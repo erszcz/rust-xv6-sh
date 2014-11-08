@@ -2,7 +2,8 @@
 #[phase(plugin, link)] extern crate log;
 extern crate libc;
 
-use libc::consts::os::posix88::{O_RDONLY, O_WRONLY, O_RDWR, O_CREAT};
+use libc::consts::os::posix88::{O_RDONLY, O_WRONLY, O_RDWR, O_CREAT,
+                                S_IRUSR, S_IWUSR};
 use libc::funcs::c95::stdlib;
 use libc::funcs::posix88::fcntl;
 use libc::funcs::posix88::unistd;
@@ -13,32 +14,35 @@ use std::fmt::{mod, Show};
 use std::io;
 use std::mem;
 
+const S_IRGRP: mode_t = 0o40;
+const S_IROTH: mode_t = 0o04;
+
 #[deriving(Clone, PartialEq, Show)]
 enum Cmd<'b> {
 
     ExecCmd {
-        argv:   Vec<&'b str>
+        argv:       Vec<&'b str>
     },
 
     RedirCmd {
-        cmd:    Box<Cmd<'b>>,
-        file:   PrintablePath,
-        mode:   mode_t,
-        fd:     c_int
+        cmd:        Box<Cmd<'b>>,
+        file:       PrintablePath,
+        oflags:     c_int,
+        fd:         c_int
     },
 
     PipeCmd {
-        left:   Box<Cmd<'b>>,
-        right:  Box<Cmd<'b>>
+        left:       Box<Cmd<'b>>,
+        right:      Box<Cmd<'b>>
     },
 
     ListCmd {
-        left:   Box<Cmd<'b>>,
-        right:  Box<Cmd<'b>>
+        left:       Box<Cmd<'b>>,
+        right:      Box<Cmd<'b>>
     },
 
     BackCmd {
-        cmd:    Box<Cmd<'b>>
+        cmd:        Box<Cmd<'b>>
     }
 
 }
@@ -55,7 +59,7 @@ impl PartialEq for PrintablePath {
 impl Show for PrintablePath {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let PrintablePath { ref path } = *self;
-        write!(f, "Path[{}]", path.as_str().unwrap_or(""))
+        write!(f, "Path[{}]", path.display())
     }
 }
 
@@ -64,8 +68,8 @@ fn run_cmd<'b>(cmd: Cmd<'b>) {
     match cmd {
         ExecCmd {argv} =>
             run_exec(argv),
-        RedirCmd {cmd, file, mode, fd} =>
-            run_redir(cmd, file.path, mode, fd),
+        RedirCmd {cmd, file, oflags, fd} =>
+            run_redir(cmd, file.path, oflags, fd),
         PipeCmd {left, right} =>
             run_pipe(left, right),
         ListCmd {left, right} =>
@@ -81,11 +85,17 @@ fn run_exec<'b>(argv: Vec<&'b str>) {
         { exit(0) }
     let path = Path::new(argv[0]);
     execv(path.clone(), argv);
-    stderr(format!("execv {} failed\n", path.as_str()));
+    stderr(format!("execv {} failed\n", path.display()));
 }
 
-fn run_redir(cmd: Box<Cmd>, file: Path, mode: mode_t, fd: c_int) {
-    fail!("run_redir")
+fn run_redir(cmd: Box<Cmd>, file: Path, oflags: c_int, fd: c_int) {
+    close(fd);
+    let mode = S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH;
+    if open(file.clone(), oflags, mode) < 0 {
+        stderr(format!("open {} failed\n", file.display()));
+        exit(0);
+    }
+    run_cmd(*cmd);
 }
 
 fn run_pipe(left: Box<Cmd>, right: Box<Cmd>) {
@@ -143,7 +153,7 @@ fn process_line(line: String) {
         { return }
     if fork_or_fail() == 0 {
         let cmd = parse_cmd(&line);
-        println!("{}", cmd);
+        stderr(format!("{}\n", cmd));
         run_cmd(cmd);
     }
     let reaped = wait();
@@ -222,15 +232,15 @@ fn parse_redirs<'b>(cmd: Cmd<'b>, ps: &mut &'b str) -> Cmd<'b> {
         let tok2 = maybe_tok2.unwrap();
         if tok2.kind != Regular
             { fail!("expected regular token") }
-        let (mode, fd) = match tok1.kind {
+        let (oflags, fd) = match tok1.kind {
             Regular => fail!("expected special symbol"),
-            LRedir => (O_RDONLY as mode_t, 0 as i32),
-            RRedir => ((O_WRONLY | O_CREAT) as mode_t, 1 as i32),
-            Append => ((O_WRONLY | O_CREAT) as mode_t, 1 as i32)
+            LRedir => (O_RDONLY, 0 as i32),
+            RRedir => (O_WRONLY | O_CREAT, 1 as i32),
+            Append => (O_WRONLY | O_CREAT, 1 as i32)
         };
         return RedirCmd { cmd: box cmd,
                           file: PrintablePath { path: Path::new(tok2.buf) },
-                          mode: mode,
+                          oflags: oflags,
                           fd: fd }
     }
     cmd
@@ -244,7 +254,7 @@ fn parse_redir_test() {
     let redircmd = parse_redirs(execcmd.clone(), p);
     assert!(redircmd == RedirCmd { cmd: box execcmd,
                                    file: PrintablePath { path: Path::new("some_file") },
-                                   mode: (O_WRONLY | O_CREAT) as mode_t,
+                                   oflags: O_WRONLY | O_CREAT,
                                    fd: 1 as i32 });
 }
 
@@ -539,7 +549,7 @@ fn execv(path: Path, args: Vec<&str>) -> c_int {
     let cstrings : Vec<CString> = args.iter().map(|s| s.to_c_str()).collect();
     let mut argv : Vec<*const i8> = cstrings.iter().map(|s| s.as_ptr()).collect();
     argv.push(0 as *const i8);
-    println!("argv: {}", argv);
+    stderr(format!("argv: {}\n", argv));
     unsafe {
         path.with_c_str(|c_path| {
             unistd::execv( c_path, argv.as_mut_slice().as_mut_ptr() )
