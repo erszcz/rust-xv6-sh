@@ -347,8 +347,8 @@ fn parse_exec<'b>(ps: &mut &'b str) -> Cmd<'b> {
 #[test]
 fn parse_exec_simple_test() {
     let cmd = ExecCmd { argv: vec!("some_cmd") };
-    let cmdline = "some_cmd".to_string();
-    assert!(cmd == parse_cmd(&cmdline));
+    let cmdline = "some_cmd";
+    assert!(cmd == parse_cmd(cmdline));
 }
 
 #[test]
