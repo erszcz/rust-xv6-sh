@@ -103,11 +103,15 @@ fn run_pipe(left: Box<Cmd>, right: Box<Cmd>) {
 }
 
 fn run_list(left: Box<Cmd>, right: Box<Cmd>) {
-    fail!("run_list")
+    if fork_or_fail() == 0
+        { run_cmd(*left); }
+    wait();
+    run_cmd(*right);
 }
 
 fn run_back(cmd: Box<Cmd>) {
-    fail!("run_back")
+    if fork_or_fail() == 0
+        { run_cmd(*cmd); }
 }
 
 fn main() {
