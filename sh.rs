@@ -99,7 +99,7 @@ fn run_redir(cmd: Box<Cmd>, file: Path, oflags: c_int, fd: c_int) {
 
 fn run_pipe(left: Box<Cmd>, right: Box<Cmd>) {
     let p = match pipe() {
-        None => fail!("pipe"),
+        None => panic!("pipe"),
         Some (fds) => fds
     };
     if fork_or_fail() == 0 {
@@ -162,8 +162,8 @@ fn main() {
 fn get_line() -> io::IoResult<String> {
     let mut stdout = io::stdout();
     match stdout.write_str("rsh $ ") {
-        Err (e) => fail!("cannot write to stdout: {}", e),
-        Ok (()) => if stdout.flush().is_err() { fail!("flush") }
+        Err (e) => panic!("cannot write to stdout: {}", e),
+        Ok (()) => if stdout.flush().is_err() { panic!("flush") }
     };
     let mut stdin = io::stdin();
     stdin.read_line()
@@ -209,7 +209,7 @@ fn stderr(msg: String) {
     let mut stderr = std::io::stderr();
     match stderr.write_str(msg.as_slice()) {
         Ok (_) => (),
-        Err (e) => fail!("cannot write to stderr: {}", e)
+        Err (e) => panic!("cannot write to stderr: {}", e)
     }
 }
 
@@ -218,7 +218,7 @@ fn parse_cmd<'b>(line: &'b String) -> Cmd<'b> {
     let cmd = parse_line(cmdline);
     peek(cmdline, "");
     if *cmdline != ""
-        { fail!("leftovers: {}", *cmdline); }
+        { panic!("leftovers: {}", *cmdline); }
     cmd
 }
 
@@ -250,13 +250,13 @@ fn parse_redirs<'b>(cmd: Cmd<'b>, ps: &mut &'b str) -> Cmd<'b> {
         // peek() returned true, unwrap can't fail
         let tok1 = get_token(ps).unwrap();
         let tok2 = match get_token(ps) {
-            None => fail!("missing file for redirection"),
+            None => panic!("missing file for redirection"),
             Some (tok) =>
-                if tok.kind != Regular { fail!("expected regular token") }
+                if tok.kind != Regular { panic!("expected regular token") }
                 else { tok }
         };
         let (oflags, fd) = match tok1.kind {
-            Regular => fail!("expected special symbol"),
+            Regular => panic!("expected special symbol"),
             LRedir => (O_RDONLY, 0 as i32),
             RRedir => (O_WRONLY | O_CREAT, 1 as i32),
             Append => (O_WRONLY | O_CREAT, 1 as i32)
@@ -283,11 +283,11 @@ fn parse_redir_test() {
 
 fn parse_block<'b>(ps: &mut &'b str) -> Cmd<'b> {
     if !peek(ps, "(")
-        { fail!("parse_block") }
+        { panic!("parse_block") }
     get_token(ps);
     let inner_cmd = parse_line(ps);
     if !peek(ps, ")")
-        { fail!("syntax - missing )") }
+        { panic!("syntax - missing )") }
     get_token(ps);
     parse_redirs(inner_cmd, ps)
 }
@@ -302,7 +302,7 @@ fn parse_exec<'b>(ps: &mut &'b str) -> Cmd<'b> {
             None => break,
             Some (token) => {
                 if token.kind != Regular
-                    { fail!("syntax - expected regular token") }
+                    { panic!("syntax - expected regular token") }
                 argv.push(token.buf);
                 ret = parse_redirs(ExecCmd { argv: argv.clone() }, ps);
             }
@@ -544,7 +544,7 @@ fn fork() -> pid_t {
 fn fork_or_fail() -> pid_t {
     let pid = fork();
     if pid < 0
-        { fail!("cannot fork") }
+        { panic!("cannot fork") }
     pid
 }
 
@@ -561,7 +561,7 @@ mod syscalls {
 fn wait() -> pid_t {
     unsafe {
         match syscalls::wait(0 as *mut c_int) {
-            -1 => fail!("cannot wait"),
+            -1 => panic!("cannot wait"),
             pid => { debug!("reaped {}", pid); pid }
         }
     }
@@ -598,7 +598,7 @@ fn pipe() -> Option<(c_int, c_int)> {
 fn dup(fd: c_int) -> c_int {
     unsafe {
         match unistd::dup(fd) {
-            -1 => fail!("cannot dup"),
+            -1 => panic!("cannot dup"),
             newfd => newfd
         }
     }
