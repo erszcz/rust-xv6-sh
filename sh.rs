@@ -12,6 +12,7 @@ use libc::types::os::arch::posix88::{mode_t, pid_t};
 use std::c_str::CString;
 use std::fmt::{mod, Show};
 use std::io;
+use std::io::fs::PathExtensions;
 
 const S_IRGRP: mode_t = 0o40;
 const S_IROTH: mode_t = 0o04;
@@ -82,9 +83,37 @@ fn run_cmd<'b>(cmd: Cmd<'b>) {
 fn run_exec<'b>(argv: Vec<&'b str>) {
     if argv.len() == 0
         { exit(0) }
-    let path = Path::new(argv[0]);
-    execv(path.clone(), argv);
-    stderr(format!("execv {} failed\n", path.display()));
+    match resolve_path(argv[0]) {
+        None => stderr(format!("rsh: {}: command not found\n", argv[0])),
+        Some (path) => {
+            execv(path.clone(), argv);
+            stderr(format!("execv {} failed\n", path.display()));
+        }
+    }
+}
+
+fn resolve_path(cmd: &str) -> Option<Path> {
+    if cmd.slice(0,2) == "./" || cmd.slice(0,1) == "/" {
+        let path = Path::new(cmd);
+        return if !path.is_file() { None }
+               else { Some (path) }
+    }
+    match std::os::getenv("PATH") {
+        None => None,
+        Some (paths) => {
+            let pathv : Vec<&str> = paths.split::<>(|c: char| c == ':').collect();
+            find_in_paths(cmd, pathv)
+        }
+    }
+}
+
+fn find_in_paths(cmd: &str, paths: Vec<&str>) -> Option<Path> {
+    for p in paths.iter() {
+        let path = Path::new(p).join(cmd);
+        if path.is_file()
+            { return Some (path) }
+    }
+    None
 }
 
 fn run_redir(cmd: Box<Cmd>, file: Path, oflags: c_int, fd: c_int) {
@@ -206,7 +235,7 @@ fn process_builtin(cmd: &str, args: &[&str]) -> bool {
 
 // TODO: make a nice `println!` like macro for stderr
 fn stderr(msg: String) {
-    let mut stderr = std::io::stderr();
+    let mut stderr = io::stderr();
     match stderr.write_str(msg.as_slice()) {
         Ok (_) => (),
         Err (e) => panic!("cannot write to stderr: {}", e)
